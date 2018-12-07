@@ -1,0 +1,556 @@
+{% extends 'StockTrainer/layout.html' %}
+
+{% load static %}
+{% block extra_css %}
+    <link rel="stylesheet" href="{% static 'css/plugins/iCheck/custom.css' %}">
+    <link rel="stylesheet" href="{% static 'css/plugins/dataTables/datatables.min.css' %}">
+{% endblock extra_css %}
+
+{% block body %}
+
+    <div class="wrapper wrapper-content">
+        <div class="container-fluid">
+
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox float-e-margins">
+                        <div class="ibox-title">
+                            <h5>S&P 500 Listing </h5>
+                        </div>
+                        <div class="ibox-content">
+                            <div class="table-responsive">
+                                <table class="table table-hover dataTables-example">
+                                    <thead>
+                                    <tr>
+                                        <th></th>
+                                        <th>Company Symbol</th>
+                                        <th>Company Name</th>
+                                        <th>Reserved</th>
+                                        <th>Reserved</th>
+                                        <th>Reserved</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {% for stock_symbol, company_name in stock_symbols.items %}
+                                        <tr>
+                                            <td><input type="checkbox" class="i-checks" name="input[]"></td>
+                                            <td>{{ stock_symbol }}</td>
+                                            <td>{{ company_name }}</td>
+                                            <td>Reserved</td>
+                                            <td>Reserved</td>
+                                            <td><a href="#"><i class="fa fa-check text-navy"></i></a></td>
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="row" id="draw-section">
+            </div>
+
+        </div>
+
+    </div>
+
+{% endblock %}
+
+{% block extra_js %}
+
+    <!-- Custom and plugin javascript -->
+    <script src="{% static 'js/inspinia.js' %}"></script>
+    <script src="{% static 'js/plugins/pace/pace.min.js' %}"></script>
+
+    <!-- Peity -->
+    <script src="{% static 'js/plugins/peity/jquery.peity.min.js' %}"></script>
+
+    <!-- Peity demo -->
+    <script src="{% static 'js/demo/peity-demo.js' %}"></script>
+
+    <!-- iCheck -->
+    <script src="{% static 'js/plugins/iCheck/icheck.min.js' %}"></script>
+
+    <!-- Datatables -->
+    <script src="{% static 'js/plugins/dataTables/datatables.min.js' %}"></script>
+
+    <!-- Highcharts JS -->
+    <script src="https://code.highcharts.com/stock/highstock.js"></script>
+    <script src="https://code.highcharts.com/modules/exporting.js"></script>
+    <script src="https://code.highcharts.com/modules/export-data.js"></script>
+
+    <!-- Moment JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.22.2/moment.min.js"></script>
+
+    <script>
+        $(document).ready(function () {
+            const WEIGHT_STRATEGY = {
+                EQUAL_WEIGHT: 0,
+                PRICE_WEIGHT: 1,
+            };
+            let isStackEnabled = false;
+            let unstacked_display_cache = [];
+            let checked_cache = [];
+            let data_cache = {};
+            let symbol_name_mapping = {};
+            let index_code_mapping = {
+                "sp500": ["SP 500", "BCIW/_INX"],
+                "sp400": ["SP 400", "BCIW/_IDX"],
+                "dowjones": ["Dow Jones", "BCB/UDJIAD1"],
+                "nasdaq": ["NASDAQ", "NASDAQOMX/COMP"],
+                "usd": ["USD/CAD", "CUR/CAD"]
+            };
+
+            $('.i-checks').iCheck({
+                checkboxClass: 'icheckbox_square-green',
+                radioClass: 'iradio_square-green',
+            });
+
+            function fetchIndex(index_name) {
+                let baseurl = "https://www.quandl.com/api/v3/datasets/";
+                let quandlcode = index_code_mapping[index_name][1];
+                let endurl = "start_date=1997-01-01&order=asc&api_key=ACdPaLLDhak82Uf9au9C";
+                let url = baseurl + quandlcode + ".json?" + endurl;
+                $.ajax({
+                    type: "GET",
+                    url: url,
+                    contentType: "application/json"
+                }).done(function (result, status, xhr) {
+                    let data = result.dataset.data.map(arr => [moment(arr[0], "YYYY-MM-DD").valueOf(), arr[1]]);
+                    setDataAndDraw(data, index_name, false);
+                }).fail(function (xhr, status, error) {
+                    alert("Failed to fetch quandl.");
+                });
+            }
+
+            function cleanData(data) {
+                let stock_symbol = Object.keys(data[0])[1];
+                let clean_data = new Array();
+                for (const point of data) {
+                    clean_data.push([point["time"], point[stock_symbol]]);
+                }
+                return clean_data;
+            }
+
+            function drawChart(data, stock_symbol, company_name) {
+                Highcharts.stockChart(stock_symbol, {
+
+                    rangeSelector: {
+                        selected: 4
+                    },
+
+                    title: {
+                        text: company_name + ' (Closing) Stock Price'
+                    },
+
+                    series: [{
+                        name: stock_symbol,
+                        data: data,
+                        tooltip: {
+                            valueDecimals: 2
+                        }
+                    }]
+                });
+            }
+
+
+            function drawChartStacked(seriesOptions) {
+                Highcharts.stockChart('stacked', {
+
+                    rangeSelector: {
+                        selected: 4
+                    },
+
+                    yAxis: {
+                        labels: {
+                            formatter: function () {
+                                return (this.value > 0 ? ' + ' : '') + this.value + '%';
+                            }
+                        },
+                        plotLines: [{
+                            value: 0,
+                            width: 2,
+                            color: 'silver'
+                        }]
+                    },
+
+                    plotOptions: {
+                        series: {
+                            compare: 'percent',
+                            showInNavigator: true
+                        }
+                    },
+
+                    tooltip: {
+                        pointFormat: '<span style="color:{series.color}">{series.name}</span>: <b>{point.y}</b> ({point.change}%)<br/>',
+                        valueDecimals: 2,
+                        split: true
+                    },
+
+                    series: seriesOptions
+                });
+            }
+
+
+            function setStackedDataAndDraw() {
+                $("#stacked").closest($(".col-lg-4.col-md-6")).show();
+                let seriesOptions = [];
+                for (let i = 0; i < checked_cache.length; i++) {
+                    seriesOptions[i] = {
+                        name: checked_cache[i],
+                        data: cleanData(data_cache[checked_cache[i]])
+                    };
+                }
+                drawChartStacked(seriesOptions);
+            }
+
+            function setDataAndDraw(data, data_symbol, isStock) {
+                let html_snippet = '<div class="col-lg-4 col-md-6"><div class="ibox float-e-margins">' +
+                    '<div class="ibox-title"><h5>Stock Price: ' + data_symbol + '</h5></div>' +
+                    '<div class="ibox-content text-center">' +
+                    '<div id="' + data_symbol + '" style="min-width: 310px; height: 400px; margin: 0 auto"></div>' +
+                    '</div></div></div>';
+                $("#draw-section").append(html_snippet);
+                if (isStock) {
+                    drawChart(data, data_symbol, symbol_name_mapping[data_symbol]);
+                    $("#" + data_symbol).addClass("stock_checked");
+                } else {
+                    drawChart(data, data_symbol, index_code_mapping[data_symbol][0]);
+                }
+                unstacked_display_cache.push(data_symbol);
+            }
+
+            function equalWeight() {
+                let data_size = data_cache[checked_cache[0]].length;
+                let first_symbol = checked_cache[0];
+                let combined_result = [];
+
+                for (let i = 0; i < data_size; i++) {
+                    let cur_stock_data = data_cache[first_symbol][i];
+                    combined_result.push([cur_stock_data["time"], cur_stock_data[first_symbol]])
+                }
+
+                for (let i = 1; i < checked_cache.length; i++) {
+                    let cur_stock_symbol = checked_cache[i];
+                    let cur_stock_data = data_cache[cur_stock_symbol];
+                    if (i === checked_cache.length - 1) {
+                        combined_result.forEach(function (item, j) {
+                            combined_result[j][1] += cur_stock_data[j][cur_stock_symbol];
+                            combined_result[j][1] *= (1 / checked_cache.length);
+                        });
+                    } else {
+                        combined_result.forEach(function (item, j) {
+                            combined_result[j][1] += cur_stock_data[j][cur_stock_symbol];
+                        });
+                    }
+                }
+
+                return combined_result;
+            }
+
+            function priceWeight() {
+                let data_size = data_cache[checked_cache[0]].length;
+                let first_symbol = checked_cache[0];
+                let combined_result = [];
+                let sum = [];
+
+                for (let i = 0; i < data_size; i++) {
+                    let cur_stock_data = data_cache[first_symbol][i];
+                    combined_result.push([cur_stock_data["time"], Math.pow(cur_stock_data[first_symbol], 2)]);
+                    sum.push(cur_stock_data[first_symbol]);
+                }
+
+                for (let i = 1; i < checked_cache.length; i++) {
+                    let cur_stock_symbol = checked_cache[i];
+                    let cur_stock_data = data_cache[cur_stock_symbol];
+                    if (i === checked_cache.length - 1) {
+                        combined_result.forEach(function (item, j) {
+                            combined_result[j][1] += Math.pow(cur_stock_data[j][cur_stock_symbol], 2);
+                            sum[j] += cur_stock_data[j][cur_stock_symbol];
+                            combined_result[j][1] /= sum[j];
+                        });
+                    } else {
+                        combined_result.forEach(function (item, j) {
+                            combined_result[j][1] += Math.pow(cur_stock_data[j][cur_stock_symbol], 2);
+                            sum[j] += cur_stock_data[j][cur_stock_symbol];
+                        });
+                    }
+                }
+                return combined_result;
+            }
+
+            function populate_graph_data(weight_strategy) {
+                switch (weight_strategy) {
+                    case WEIGHT_STRATEGY.EQUAL_WEIGHT:
+                        return equalWeight();
+                    case WEIGHT_STRATEGY.PRICE_WEIGHT:
+                        return priceWeight();
+                    default:
+                        return;
+                }
+            }
+
+            $('.i-checks').on('ifChecked', function () {
+                let stock_symbol = $(this).closest('td').next()[0].textContent;
+                let company_name = $(this).closest('td').next().next()[0].textContent;
+
+                if (!(stock_symbol in symbol_name_mapping)) {
+                    symbol_name_mapping[stock_symbol] = company_name;
+                }
+
+                checked_cache.push(stock_symbol);
+
+                if (!(stock_symbol in data_cache)) {
+                    $.ajax({
+                        type: "GET",
+                        url: "/stock",
+                        data: {"stock_symbol": stock_symbol},
+                        dataType: "json",
+                        contentType: "application/json"
+                    }).done(function (result, status, xhr) {
+                        let clean_result = cleanData(result);
+                        data_cache[stock_symbol] = result;
+                        if (isStackEnabled) {
+                            setStackedDataAndDraw();
+                        } else {
+                            setDataAndDraw(clean_result, stock_symbol, true);
+                        }
+                    }).fail(function (xhr, status, error) {
+                        alert("Local error callback.");
+                    });
+                } else {
+                    if (isStackEnabled) {
+                        setStackedDataAndDraw();
+                    } else {
+                        if ($("#" + stock_symbol).length === 0) {
+                            setDataAndDraw(cleanData(data_cache[stock_symbol]), stock_symbol, true);
+                        } else {
+                            $("#" + stock_symbol).closest($(".col-lg-4.col-md-6")).show();
+                        }
+                    }
+                    $("#" + stock_symbol).addClass("stock_checked");
+                }
+            });
+
+            $('.i-checks').on('ifUnchecked', function () {
+                stock_symbol = $(this).closest('td').next()[0].textContent;
+                let index = checked_cache.indexOf(stock_symbol);
+                if (index !== -1) checked_cache.splice(index, 1);
+                $("#" + stock_symbol).closest($(".col-lg-4.col-md-6")).hide();
+                $("#" + stock_symbol).removeClass("stock_checked");
+                if (isStackEnabled) {
+                    if (checked_cache.length === 0) {
+                        $("#stacked").closest($(".col-lg-4.col-md-6")).hide();
+                    } else {
+                        setStackedDataAndDraw();
+                    }
+                }
+            });
+
+            let data_table = $('.dataTables-example').DataTable({
+                pageLength: 5,
+                aLengthMenu: [[5, 10, 25, -1], [5, 10, 25, "All"]],
+                iDisplayLength: 25,
+                responsive: true,
+                dom: '<"html5buttons"B>lTfgitp',
+                buttons: [
+                    {
+                        text: 'SP500',
+                        action: function (e, dt, node, config) {
+                            sp500Enabled = !data_table.button(0).active();
+                            data_table.button(0).active(sp500Enabled);
+                            if (sp500Enabled) {
+                                if (unstacked_display_cache.includes("sp500")) {
+                                    $("#sp500").closest($(".col-lg-4.col-md-6")).show();
+                                } else {
+                                    fetchIndex("sp500");
+                                }
+                            } else {
+                                $("#sp500").closest($(".col-lg-4.col-md-6")).hide();
+                            }
+                        }
+                    },
+                    {
+                        text: 'SP400',
+                        action: function (e, dt, node, config) {
+                            sp400Enabled = !data_table.button(1).active();
+                            data_table.button(1).active(sp400Enabled);
+                            if (sp400Enabled) {
+                                if (unstacked_display_cache.includes("sp400")) {
+                                    $("#sp400").closest($(".col-lg-4.col-md-6")).show();
+                                } else {
+                                    fetchIndex("sp400");
+                                }
+                            } else {
+                                $("#sp400").closest($(".col-lg-4.col-md-6")).hide();
+                            }
+                        }
+                    },
+                    {
+                        text: 'NASDAQ',
+                        action: function (e, dt, node, config) {
+                            nasdaqEnabled = !data_table.button(2).active();
+                            data_table.button(2).active(nasdaqEnabled);
+                            if (nasdaqEnabled) {
+                                if (unstacked_display_cache.includes("nasdaq")) {
+                                    $("#nasdaq").closest($(".col-lg-4.col-md-6")).show();
+                                } else {
+                                    fetchIndex("nasdaq");
+                                }
+                            } else {
+                                $("#nasdaq").closest($(".col-lg-4.col-md-6")).hide();
+                            }
+                        }
+                    },
+                    {
+                        text: 'Dow Jones',
+                        action: function (e, dt, node, config) {
+                            dowjonesEnabled = !data_table.button(3).active();
+                            data_table.button(3).active(dowjonesEnabled);
+                            if (dowjonesEnabled) {
+                                if (unstacked_display_cache.includes("dowjones")) {
+                                    $("#dowjones").closest($(".col-lg-4.col-md-6")).show();
+                                } else {
+                                    fetchIndex("dowjones");
+                                }
+                            } else {
+                                $("#dowjones").closest($(".col-lg-4.col-md-6")).hide();
+                            }
+                        }
+                    },
+                    {
+                        text: 'USD/CAD',
+                        action: function (e, dt, node, config) {
+                            usdEnabled = !data_table.button(4).active();
+                            data_table.button(4).active(usdEnabled);
+                            if (usdEnabled) {
+                                if (unstacked_display_cache.includes("usd")) {
+                                    $("#usd").closest($(".col-lg-4.col-md-6")).show();
+                                } else {
+                                    fetchIndex("usd");
+                                }
+                            } else {
+                                $("#usd").closest($(".col-lg-4.col-md-6")).hide();
+                            }
+                        }
+                    },
+                    {
+                        text: 'Stack',
+                        action: function (e, dt, node, config) {
+                            isStackEnabled = !data_table.button(5).active();
+                            data_table.button(5).active(isStackEnabled);
+
+                            if (isStackEnabled) {
+                                if ($("#stacked").length === 0) {
+                                    let html_snippet = '<div class="col-lg-4 col-md-6"><div class="ibox float-e-margins">' +
+                                        '<div class="ibox-title"><h5>Stacked Stock Price</h5></div>' +
+                                        '<div class="ibox-content text-center">' +
+                                        '<div id="stacked" style="min-width: 310px; height: 400px; margin: 0 auto"></div>' +
+                                        '</div></div></div>';
+                                    $("#draw-section").append(html_snippet);
+                                }
+
+                                if (checked_cache.length === 0) {
+                                    $("#stacked").closest($(".col-lg-4.col-md-6")).hide();
+                                    return;
+                                }
+
+                                $(".stock_checked").closest($(".col-lg-4.col-md-6")).hide();
+                                setStackedDataAndDraw();
+
+                            } else {
+                                $("#stacked").closest($(".col-lg-4.col-md-6")).hide();
+
+                                for (let stock_symbol of checked_cache) {
+                                    if (unstacked_display_cache.indexOf(stock_symbol) === -1) {
+                                        let data = cleanData(data_cache[stock_symbol]);
+                                        setDataAndDraw(data, stock_symbol, true);
+                                    }
+                                }
+
+                                $(".stock_checked").closest($(".col-lg-4.col-md-6")).show();
+                            }
+                        }
+                    },
+                    {
+                        text: 'Equal Weight',
+                        action: function (e, dt, node, config) {
+                            let combined_symbol = checked_cache.join(',') + "-EW";
+
+                            $(".weight_graph").hide();
+
+                            if (checked_cache.length < 2) return;
+
+                            if (unstacked_display_cache.indexOf(combined_symbol) !== -1) {
+                                // Jquery does not work with comma
+                                combined_symbol = combined_symbol.replace(/,/g, '\\,');
+                                $("#" + combined_symbol).closest($(".col-lg-4.col-md-6")).show();
+                                return;
+                            }
+
+                            for (let i = 1; i < checked_cache.length; i++) {
+                                if (data_cache[checked_cache[i]].length !== data_cache[checked_cache[i - 1]].length) {
+                                    alert("The number of price points do not match!");
+                                    return;
+                                }
+                            }
+
+                            unstacked_display_cache.push(combined_symbol);
+
+                            let combined_result = populate_graph_data(WEIGHT_STRATEGY.EQUAL_WEIGHT);
+
+                            let html_snippet = '<div class="col-lg-4 col-md-6 weight_graph"><div class="ibox float-e-margins">' +
+                                '<div class="ibox-title"><h5>Equal Weight Stock Price</h5></div>' +
+                                '<div class="ibox-content text-center">' +
+                                '<div id="' + combined_symbol + '" style="min-width: 310px; height: 400px; margin: 0 auto"></div>' +
+                                '</div></div></div>';
+                            $("#draw-section").prepend(html_snippet);
+                            drawChart(combined_result, combined_symbol, combined_symbol);
+                        }
+                    },
+                    {
+                        text: 'Price Weight',
+                        action: function (e, dt, node, config) {
+                            let combined_symbol = checked_cache.join(',') + "-PW";
+
+                            $(".weight_graph").hide();
+
+                            if (checked_cache.length < 2) return;
+
+                            if (unstacked_display_cache.indexOf(combined_symbol) !== -1) {
+                                // Jquery does not work with comma
+                                combined_symbol = combined_symbol.replace(/,/g, '\\,');
+                                $("#" + combined_symbol).closest($(".col-lg-4.col-md-6")).show();
+                                return;
+                            }
+
+                            for (let i = 1; i < checked_cache.length; i++) {
+                                if (data_cache[checked_cache[i]].length !== data_cache[checked_cache[i - 1]].length) {
+                                    alert("The number of price points do not match!");
+                                    return;
+                                }
+                            }
+
+                            unstacked_display_cache.push(combined_symbol);
+
+                            let combined_result = populate_graph_data(WEIGHT_STRATEGY.PRICE_WEIGHT);
+
+                            let html_snippet = '<div class="col-lg-4 col-md-6 weight_graph"><div class="ibox float-e-margins">' +
+                                '<div class="ibox-title"><h5>Equal Weight Stock Price</h5></div>' +
+                                '<div class="ibox-content text-center">' +
+                                '<div id="' + combined_symbol + '" style="min-width: 310px; height: 400px; margin: 0 auto"></div>' +
+                                '</div></div></div>';
+                            $("#draw-section").prepend(html_snippet);
+                            drawChart(combined_result, combined_symbol, combined_symbol);
+                        }
+                    }
+                ]
+            });
+        });
+    </script>
+
+{% endblock extra_js %}
